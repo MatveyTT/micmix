@@ -1,9 +1,8 @@
-// MicMixApo — прототип APO (Audio Processing Object) для микрофона.
+// MicMixApo — APO (Audio Processing Object) для микрофона.
 //
-// Этап 0: подмешивает в сигнал микрофона короткий тестовый «бип»
-// (880 Гц, 0.3 с раз в секунду). Если бип слышен в записи — значит
-// Windows загрузила нашу DLL в аудиодвижок и путь «прямо в микрофон» рабочий.
-// На следующем этапе вместо бипа сюда придёт звук приложений через общую память.
+// Windows загружает DLL в аудиодвижок (audiodg.exe) как эффект микрофона.
+// APO читает звук приложений, который движок MicMix пишет в общую память
+// (см. MicMixShared.h), и подмешивает его в сигнал микрофона.
 //
 // Сборка: build.bat (нужна Visual Studio с C++ и Windows SDK).
 
@@ -13,13 +12,15 @@
 #include <mmreg.h>
 #include <audioenginebaseapo.h>
 #include <audiomediatype.h>
+#include <sddl.h>
 
 #include <atomic>
-#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <new>
+
+#include "MicMixShared.h"
 
 // ---------- Диагностический журнал: C:\ProgramData\MicMixApo\apo.log ----------
 // Пишется только при загрузке и настройке, не в аудиопотоке (кроме одной строки
@@ -68,6 +69,60 @@ static const GUID kSubtypeFloat =
     { 0x00000003, 0x0000, 0x0010, { 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71 } };
 
 static std::atomic<long> g_objects{0};
+
+// ---------- Общая память с движком ----------
+// Создаёт (или открывает уже созданную) секцию с кольцевым буфером.
+// Права: службы и администраторы — всё, вошедшие в систему пользователи — чтение и запись,
+// чтобы движок, запущенный без прав администратора, мог туда писать.
+static micmix::RingHeader* OpenRing(HANDLE* outMapping)
+{
+    *outMapping = nullptr;
+    SECURITY_ATTRIBUTES sa{ sizeof(sa), nullptr, FALSE };
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            L"D:(A;;GA;;;SY)(A;;GA;;;LS)(A;;GA;;;BA)(A;;GRGW;;;IU)",
+            SDDL_REVISION_1, &sa.lpSecurityDescriptor, nullptr))
+    {
+        Log("Ring: bad security descriptor, err=%lu", GetLastError());
+        return nullptr;
+    }
+    HANDLE h = CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0,
+                                  static_cast<DWORD>(micmix::kRingBytes), micmix::kRingName);
+    const DWORD err = GetLastError();
+    LocalFree(sa.lpSecurityDescriptor);
+    if (!h)
+    {
+        Log("Ring: CreateFileMapping failed, err=%lu", err);
+        return nullptr;
+    }
+    auto* hdr = static_cast<micmix::RingHeader*>(
+        MapViewOfFile(h, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, micmix::kRingBytes));
+    if (!hdr)
+    {
+        Log("Ring: MapViewOfFile failed, err=%lu", GetLastError());
+        CloseHandle(h);
+        return nullptr;
+    }
+    if (err != ERROR_ALREADY_EXISTS)
+    {
+        // Новая секция заполнена нулями — пишем заголовок.
+        hdr->version = micmix::kVersion;
+        hdr->capacityFrames = micmix::kCapacityFrames;
+        hdr->channels = micmix::kChannels;
+        std::atomic_thread_fence(std::memory_order_release);
+        hdr->magic = micmix::kMagic;
+    }
+    if (hdr->magic != micmix::kMagic || hdr->version != micmix::kVersion ||
+        hdr->capacityFrames != micmix::kCapacityFrames || hdr->channels != micmix::kChannels)
+    {
+        Log("Ring: header mismatch (magic=0x%08X version=%u)", hdr->magic, hdr->version);
+        UnmapViewOfFile(hdr);
+        CloseHandle(h);
+        return nullptr;
+    }
+    Log("Ring: %s %ls", err == ERROR_ALREADY_EXISTS ? "opened" : "created", micmix::kRingName);
+    *outMapping = h;
+    return hdr;
+}
 static std::atomic<long> g_serverLocks{0};
 
 // Аудиодвижок Windows внутри APO работает с float32 — его и принимаем.
@@ -165,8 +220,7 @@ public:
     // ---------- IAudioProcessingObject ----------
     STDMETHODIMP Reset() override
     {
-        m_phase = 0.0;
-        m_frameInSecond = 0;
+        m_primed = false;
         return S_OK;
     }
 
@@ -254,10 +308,13 @@ public:
 
         m_channels = f.dwSamplesPerFrame;
         m_sampleRate = f.fFramesPerSecond > 0 ? static_cast<UINT32>(f.fFramesPerSecond) : 48000;
-        m_phaseStep = 2.0 * 3.14159265358979323846 * kToneHz / m_sampleRate;
+        if (!m_ring) m_ring = OpenRing(&m_mapping);
         Reset();
         m_locked = true;
         m_loggedProcess = false;
+        m_rateMismatch = false;
+        m_mixedFrames = 0;
+        m_underruns = 0;
         Log("LockForProcess OK: %u ch, %u Hz, max %u frames", m_channels, m_sampleRate,
             ppIn[0]->u32MaxFrameCount);
         return S_OK;
@@ -267,7 +324,8 @@ public:
     {
         if (!m_locked) return APOERR_ALREADY_UNLOCKED;
         m_locked = false;
-        Log("UnlockForProcess");
+        Log("UnlockForProcess: mixed %llu frames, underruns %lu%s", m_mixedFrames, m_underruns,
+            m_rateMismatch ? ", engine sample rate differs from mic (not mixed)" : "");
         return S_OK;
     }
 
@@ -297,35 +355,74 @@ public:
         else if (dst != src)
             std::memcpy(dst, src, sizeof(float) * frames * ch); // обычно буфер общий (in-place)
 
-        const UINT32 beepFrames = m_sampleRate * kBeepMs / 1000;
-        for (UINT32 i = 0; i < frames; ++i)
-        {
-            float s = 0.0f;
-            if (m_frameInSecond < beepFrames)
-            {
-                s = kToneGain * static_cast<float>(std::sin(m_phase));
-                m_phase += m_phaseStep;
-                if (m_phase > 6.283185307179586) m_phase -= 6.283185307179586;
-            }
-            if (++m_frameInSecond >= m_sampleRate) m_frameInSecond = 0;
-
-            float* frame = dst + static_cast<size_t>(i) * ch;
-            for (UINT32 c = 0; c < ch; ++c)
-            {
-                float v = frame[c] + s;
-                frame[c] = v > 1.0f ? 1.0f : (v < -1.0f ? -1.0f : v);
-            }
-        }
+        MixFromRing(dst, frames, ch);
 
         out->u32ValidFrameCount = frames;
         out->u32BufferFlags = BUFFER_VALID;
     }
 
+    // Подмешивает в dst звук из общей памяти. Без блокировок и выделений памяти.
+    void MixFromRing(float* dst, UINT32 frames, UINT32 ch)
+    {
+        micmix::RingHeader* r = m_ring;
+        if (!r || ch == 0) return;
+        const uint32_t rate = r->sampleRate.load(std::memory_order_acquire);
+        if (rate == 0) { m_primed = false; return; }              // движок не подключён
+        if (rate != m_sampleRate) { m_rateMismatch = true; m_primed = false; return; }
+
+        const int64_t written = r->writeFrame.load(std::memory_order_acquire);
+        int64_t avail = written - m_readFrame;
+        if (avail < 0 || avail > static_cast<int64_t>(micmix::kCapacityFrames / 2))
+        {
+            // Потеряли синхронизацию (движок перезапустился или мы отстали) — догоняем.
+            m_readFrame = written;
+            avail = 0;
+            m_primed = false;
+        }
+        if (!m_primed)
+        {
+            // Копим небольшой запас, чтобы неровная запись движка не давала щелчков.
+            if (avail < kPrimeFrames) return;
+            m_primed = true;
+        }
+        if (avail > kMaxLagFrames)
+        {
+            // Задержка выросла (часы движка и микрофона немного расходятся) — срезаем лишнее.
+            m_readFrame = written - kPrimeFrames;
+            avail = kPrimeFrames;
+        }
+
+        const UINT32 n = avail < frames ? static_cast<UINT32>(avail) : frames;
+        const float* data = reinterpret_cast<const float*>(
+            reinterpret_cast<const BYTE*>(r) + micmix::kDataOffset);
+        constexpr uint32_t mask = micmix::kCapacityFrames - 1;
+        for (UINT32 i = 0; i < n; ++i)
+        {
+            const float* in = data + static_cast<size_t>((m_readFrame + i) & mask) * micmix::kChannels;
+            float* frame = dst + static_cast<size_t>(i) * ch;
+            if (ch == 1)
+                frame[0] = Clamp(frame[0] + 0.5f * (in[0] + in[1]));
+            else
+                for (UINT32 c = 0; c < ch; ++c)
+                    frame[c] = Clamp(frame[c] + in[c & 1]);
+        }
+        m_readFrame += n;
+        m_mixedFrames += n;
+        if (n < frames) { m_primed = false; ++m_underruns; }   // движок не успел — ждём новый запас
+    }
+
+    static float Clamp(float v) { return v > 1.0f ? 1.0f : (v < -1.0f ? -1.0f : v); }
+
     STDMETHODIMP_(UINT32) CalcInputFrames(UINT32 outFrames) override { return outFrames; }
     STDMETHODIMP_(UINT32) CalcOutputFrames(UINT32 inFrames) override { return inFrames; }
 
 private:
-    ~MicMixApo() { --g_objects; }
+    ~MicMixApo()
+    {
+        if (m_ring) UnmapViewOfFile(m_ring);
+        if (m_mapping) CloseHandle(m_mapping);
+        --g_objects;
+    }
 
     HRESULT CheckFormat(IAudioMediaType* pRequested, IAudioMediaType** ppSupported)
     {
@@ -338,9 +435,8 @@ private:
         return S_OK;
     }
 
-    static constexpr double kToneHz = 880.0;
-    static constexpr float kToneGain = 0.08f;  // тихо, чтобы не оглушить собеседника
-    static constexpr UINT32 kBeepMs = 300;
+    static constexpr int64_t kPrimeFrames = 960;      // 20 мс при 48 кГц: запас перед стартом
+    static constexpr int64_t kMaxLagFrames = 4 * 960; // 80 мс: больше — срезаем задержку
 
     std::atomic<long> m_refs{1};
     InnerUnknown m_inner;
@@ -348,10 +444,14 @@ private:
     bool m_locked = false;
     UINT32 m_channels = 1;
     UINT32 m_sampleRate = 48000;
-    double m_phase = 0.0;
-    double m_phaseStep = 0.0;
-    UINT32 m_frameInSecond = 0;
     bool m_loggedProcess = false;
+    HANDLE m_mapping = nullptr;
+    micmix::RingHeader* m_ring = nullptr;
+    int64_t m_readFrame = 0;
+    bool m_primed = false;
+    bool m_rateMismatch = false;
+    unsigned long long m_mixedFrames = 0;
+    unsigned long m_underruns = 0;
 };
 
 // ---------- Фабрика классов и экспорт COM ----------

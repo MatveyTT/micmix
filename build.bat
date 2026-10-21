@@ -27,7 +27,7 @@ if errorlevel 1 (
 if not exist build mkdir build
 cl /nologo /LD /EHsc /O2 /W4 /std:c++17 /utf-8 /MT /DUNICODE /D_UNICODE ^
    src\MicMixApo.cpp /Fobuild\ /Fe:build\MicMixApo.dll ^
-   /link /DEF:src\MicMixApo.def ole32.lib
+   /link /DEF:src\MicMixApo.def ole32.lib advapi32.lib
 if errorlevel 1 (
     echo [!] Build failed - see errors above.
     goto :fail

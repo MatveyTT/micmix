@@ -1,0 +1,17 @@
+[package]
+name = "micmix-engine"
+version = "0.1.0"
+edition = "2021"
+description = "MicMix: захват звука приложений и передача в APO микрофона"
+license = "MIT"
+
+[dependencies]
+wasapi = "0.26.0"
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Memory",
+    "Win32_System_Diagnostics_ToolHelp",
+] }
+
+[profile.release]
+opt-level = 3
