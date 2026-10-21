@@ -20,7 +20,11 @@ param(
     [string]$Device,
     [switch]$Uninstall,
     [switch]$Status,
-    [string]$DllPath = (Join-Path $PSScriptRoot 'build\MicMixApo.dll')
+    [string]$DllPath = (Join-Path $PSScriptRoot 'build\MicMixApo.dll'),
+    # GUID микрофона из MMDevices\Audio\Capture — точный выбор (так вызывает приложение MicMix).
+    [string]$EndpointId,
+    # Без вопросов в консоли: защиту аудиодвижка снимает сам, код возврата 0/1 (для приложения).
+    [switch]$Quiet
 )
 
 $ErrorActionPreference = 'Stop'
@@ -158,12 +162,18 @@ function Get-CaptureEndpoints {
 
 function Select-Endpoint($List, [string]$Filter, [string]$Prompt) {
     $List = @($List)
+    if ($EndpointId) {
+        $hit = @($List | Where-Object { $_.Id -eq $EndpointId })
+        if ($hit.Count -eq 0) { throw "Не нашёл микрофон $EndpointId." }
+        return $hit[0]
+    }
     if ($Filter) {
         $List = @($List | Where-Object { "$($_.Name) $($_.Adapter)" -like "*$Filter*" })
         if ($List.Count -eq 0) { throw "Не нашёл микрофон, в имени которого есть «$Filter»." }
         if ($List.Count -eq 1) { return $List[0] }
     }
     if ($List.Count -eq 0) { throw 'Подходящих микрофонов не найдено.' }
+    if ($Quiet) { throw 'Подходит несколько микрофонов — укажи -EndpointId.' }
     Write-Host ''
     for ($i = 0; $i -lt $List.Count; $i++) {
         $mark = if ($List[$i].Installed) { '  [APO стоит]' } else { '' }
@@ -185,7 +195,7 @@ function Test-ProtectedAudioDG {
             -Name DisableProtectedAudioDG -ErrorAction SilentlyContinue).DisableProtectedAudioDG
     if ($v -eq 1) { return }
     Write-Warning 'Защита аудиодвижка включена: Windows не загрузит неподписанную DLL.'
-    if ((Read-Host 'Отключить защиту (DisableProtectedAudioDG = 1)? Потребуется перезагрузка. [y/n]') -eq 'y') {
+    if ($Quiet -or (Read-Host 'Отключить защиту (DisableProtectedAudioDG = 1)? Потребуется перезагрузка. [y/n]') -eq 'y') {
         New-Item 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio' -Force | Out-Null
         New-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio' `
             -Name DisableProtectedAudioDG -PropertyType DWord -Value 1 -Force | Out-Null
@@ -369,3 +379,4 @@ try {
 }
 # Без exit: при запуске через install.bat окно должно остаться открытым (-NoExit).
 $global:LASTEXITCODE = $exitCode
+if ($Quiet) { exit $exitCode }

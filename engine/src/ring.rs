@@ -27,9 +27,9 @@ struct Header {
     version: u32,
     capacity_frames: u32,
     channels: u32,
-    sample_rate: AtomicU32, // 0 — движок не подключён
-    reserved: u32,
-    write_frame: AtomicI64, // сколько кадров записано за всё время
+    sample_rate: AtomicU32,     // ставит движок; 0 — движок не подключён
+    mic_sample_rate: AtomicU32, // ставит APO: частота микрофона
+    write_frame: AtomicI64,     // сколько кадров записано за всё время
 }
 
 const _: () = assert!(std::mem::offset_of!(Header, write_frame) == 24);
@@ -46,7 +46,7 @@ unsafe impl Send for Ring {}
 
 impl Ring {
     /// Открывает секцию APO. `None` — APO сейчас не запущен (никто не пишет с микрофона).
-    pub fn open(sample_rate: u32) -> Option<Ring> {
+    pub fn open() -> Option<Ring> {
         unsafe {
             let mapping = OpenFileMappingW(
                 (FILE_MAP_READ | FILE_MAP_WRITE).0,
@@ -66,11 +66,9 @@ impl Ring {
                 || h.capacity_frames as usize != CAPACITY_FRAMES
                 || h.channels as usize != CHANNELS
             {
-                eprintln!("[!] Общая память другой версии — пересобери и переустанови APO.");
                 return None; // Drop закроет секцию
             }
             let written = h.write_frame.load(Ordering::Acquire);
-            h.sample_rate.store(sample_rate, Ordering::Release);
             ring.write_frame = written;
             Some(ring)
         }
@@ -78,6 +76,16 @@ impl Ring {
 
     fn header(&self) -> &Header {
         unsafe { &*(self.view.Value as *const Header) }
+    }
+
+    /// Частота микрофона, которую сообщил APO (0 — старый APO или ещё не сообщил).
+    pub fn mic_rate(&self) -> u32 {
+        self.header().mic_sample_rate.load(Ordering::Acquire)
+    }
+
+    /// Сообщает APO частоту, в которой движок пишет звук.
+    pub fn set_rate(&self, rate: u32) {
+        self.header().sample_rate.store(rate, Ordering::Release);
     }
 
     /// Дописывает стерео-кадры (L, R, L, R, ...) и сообщает APO, что они готовы.

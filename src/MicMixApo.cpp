@@ -309,6 +309,7 @@ public:
         m_channels = f.dwSamplesPerFrame;
         m_sampleRate = f.fFramesPerSecond > 0 ? static_cast<UINT32>(f.fFramesPerSecond) : 48000;
         if (!m_ring) m_ring = OpenRing(&m_mapping);
+        if (m_ring) m_ring->micSampleRate.store(m_sampleRate, std::memory_order_release);
         Reset();
         m_locked = true;
         m_loggedProcess = false;

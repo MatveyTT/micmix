@@ -29,7 +29,7 @@ struct RingHeader
     uint32_t capacityFrames;
     uint32_t channels;
     std::atomic<uint32_t> sampleRate;   // ставит движок; 0 — движок не подключён
-    uint32_t reserved;
+    std::atomic<uint32_t> micSampleRate; // ставит APO: частота микрофона, в ней движок и пишет
     std::atomic<int64_t> writeFrame;    // сколько кадров записано за всё время
 };
 static_assert(sizeof(RingHeader) <= kDataOffset, "header too big");

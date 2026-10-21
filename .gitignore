@@ -7,3 +7,6 @@ build.log
 mics.txt
 step1.done
 target/
+node_modules/
+app/dist/
+app/src-tauri/gen/

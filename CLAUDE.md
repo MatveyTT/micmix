@@ -37,22 +37,35 @@
 - Микрофоны: встроенный (аудио Senary/Realtek — уточни по списку) и гарнитура HyperX.
   Первые тесты — **только на встроенном**, чтобы HyperX оставался рабочим.
 
-## Текущий статус (этап 1: захват звука, базовая версия работает)
+## Текущий статус (этапы 1–2: приложение)
 
-- `src/MicMixApo.cpp` — APO: читает звук из общей памяти и подмешивает в микрофон (сам больше не пищит).
-  CLSID `{04206D4E-6467-414B-B052-6AA2220324A5}` (тот же в `install-apo.ps1`).
+Структура: cargo-workspace в корне (`Cargo.toml`, общий `target\`), члены `engine` и `app/src-tauri`.
+
+- `src/MicMixApo.cpp` — APO: читает звук из общей памяти и подмешивает в микрофон (сам не пищит).
+  CLSID `{04206D4E-6467-414B-B052-6AA2220324A5}` (тот же в `install-apo.ps1` и `engine/src/mics.rs`).
 - Общая память `Global\MicMixApo.Ring.v1` (раскладка — `src/MicMixShared.h` = `engine/src/ring.rs`):
   кольцо float32 стерео на 16384 кадра, движок пишет и двигает `writeFrame`, каждый поток APO читает
   со своей позиции (запас 20 мс, задержка срезается после 80 мс). Секцию создаёт **APO** (у службы есть
-  право на `Global\`), движок только открывает и раз в секунду пробует, пока её нет. Если частота
-  движка ≠ частоте микрофона, APO не подмешивает (пишет об этом в `UnlockForProcess`); ресемплинга пока нет.
-- `engine/` — движок на Rust (`wasapi 0.26`, `windows 0.62`): `micmix-engine tone` (тестовый бип),
-  `micmix-engine capture <PID|имя.exe> [--gain 0.5] [--rate 48000]` (process loopback с дочерними процессами;
-  по имени берёт корневой процесс). Проверено 2026-10-22: tone и захват процесса дают «БИП ЕСТЬ» в captest,
-  underruns 0.
+  право на `Global\`), движок только открывает и раз в секунду пробует, пока её нет. APO пишет в
+  `micSampleRate` частоту микрофона, движок захватывает приложения сразу в ней (WASAPI autoconvert) —
+  ресемплер не нужен. Если частоты всё же разные, APO не подмешивает (пишет в `UnlockForProcess`).
+- `engine/` — ядро `micmix_core` (`wasapi 0.26`, `windows 0.62`, `png`, `serde`):
+  `engine.rs` — микшер (поток захвата на приложение + поток микшера раз в 5 мс, громкость/mute на источник,
+  общая громкость, лимитер −1 дБFS, уровни, тестовый бип = источник `micmix:tone`, перезапуск захвата
+  при перезапуске приложения); `apps.rs` — приложения со звуковыми сессиями, иконки (ExtractIconEx → PNG),
+  выбор процесса для захвата (процесс с сессией → самый верхний предок с тем же именем);
+  `mics.rs` — микрофоны и стоит ли APO (реестр); `config.rs` — `%APPDATA%\MicMix\config.json`.
+  Консоль: `target\release\micmix-engine.exe apps|mics|tone|capture <exe>...`.
+- `app/` — Tauri 2.12 + Svelte 5 + Vite 8 + Tailwind 4. `app/src-tauri/src/main.rs`: команды, трей
+  (открыть / mute / выход), крестик прячет в трей, глобальная клавиша `Ctrl+Shift+M` (mute),
+  `apo_install` запускает `install-apo.ps1 -Quiet -EndpointId {guid} [-Uninstall]` через UAC.
+  Интерфейс: `app/src/App.svelte` + `app/src/lib/*`. Иконка рисуется `app/make-icon.ps1`.
+  Запуск: `cd app; npm run tauri dev`, сборка установщика: `npm run tauri build` (NSIS, ресурсы —
+  `install-apo.ps1` и `build\MicMixApo.dll`, поэтому сначала `build.bat`).
 - Rust у пользователя: 1.99.1 из .msi, подключён в rustup как тулчейн `msi` (по умолчанию). Сеть медленная
   (~100 КБ/с), rustup-загрузки зависали — новые тулчейны/компоненты лучше не качать без нужды.
-- `build.bat` собирает `build\MicMixApo.dll` и `build\captest.exe` (MSVC, /MT). Движок: `cargo build --release` в `engine\`.
+  `cargo fetch` без `--target x86_64-pc-windows-msvc` качает и линуксовые крейты — не надо.
+- `build.bat` собирает `build\MicMixApo.dll` и `build\captest.exe` (MSVC, /MT).
 - `install-apo.ps1` — универсальный установщик на любой микрофон: ставит наш CLSID первым
   в `PKEY_CompositeFX_StreamEffectClsid` (`{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},13`),
   при пустом legacy SFX (`...,5`) пишет туда тоже, включает улучшения

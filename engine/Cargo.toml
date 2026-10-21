@@ -1,17 +1,30 @@
 [package]
 name = "micmix-engine"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "MicMix: захват звука приложений и передача в APO микрофона"
-license = "MIT"
+description = "MicMix: захват звука приложений, микшер и передача в APO микрофона"
+
+[lib]
+name = "micmix_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "micmix-engine"
+path = "src/main.rs"
 
 [dependencies]
 wasapi = "0.26.0"
+png = "0.18.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1"
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
-    "Win32_System_Memory",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Memory",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ] }
-
-[profile.release]
-opt-level = 3
