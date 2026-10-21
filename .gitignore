@@ -1,0 +1,9 @@
+build/
+logs/
+*.obj
+*.exp
+*.lib
+build.log
+mics.txt
+step1.done
+target/

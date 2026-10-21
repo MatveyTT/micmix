@@ -1,0 +1,4 @@
+LIBRARY MicMixApo
+EXPORTS
+    DllGetClassObject PRIVATE
+    DllCanUnloadNow   PRIVATE
