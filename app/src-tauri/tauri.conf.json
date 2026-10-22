@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "MicMix",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "identifier": "io.github.matveytt.micmix",
   "build": {
     "frontendDist": "../dist",
@@ -19,6 +19,8 @@
         "minWidth": 780,
         "minHeight": 540,
         "backgroundColor": "#0b0d12",
+        "zoomHotkeysEnabled": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ElasticOverscroll --disable-pinch --overscroll-history-navigation=0",
         "center": true
       }
     ],

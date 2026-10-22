@@ -97,3 +97,25 @@ impl Config {
         std::fs::rename(tmp, p).map_err(|e| e.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_overwrites_and_loads_back() {
+        let dir = std::env::temp_dir().join(format!("micmix-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("APPDATA", &dir);
+        let mut c = Config::default();
+        c.save().unwrap();
+        c.sounds.push(SoundConfig { id: "x".into(), name: "Звук".into(), file: "C:\\a.mp3".into(), gain: 1.0, hotkey: Some("F7".into()) });
+        c.master_gain = 0.42;
+        c.save().unwrap(); // поверх существующего файла
+        let back = Config::load();
+        assert_eq!(back.sounds.len(), 1);
+        assert_eq!(back.sounds[0].name, "Звук");
+        assert_eq!(back.master_gain, 0.42);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

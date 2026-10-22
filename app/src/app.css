@@ -15,6 +15,11 @@ html,
 body {
   margin: 0;
   height: 100%;
+  /* Окно приложения, а не страница: жесты тачпада не должны двигать или растягивать интерфейс.
+     overscroll-behavior убирает «резиновую» прокрутку за край, touch-action — масштаб пальцами. */
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: pan-y;
   background: var(--color-bg);
   color: #e7e9ee;
   font-family: var(--font-sans);
@@ -24,6 +29,13 @@ body {
 
 #app {
   height: 100%;
+}
+
+/* Прокручиваемые области: только по вертикали и без отскока у края. */
+main,
+.scroll-area {
+  overflow-x: hidden;
+  overscroll-behavior: contain;
 }
 
 /* Ползунок громкости: тонкая дорожка, заполнение градиентом через --fill. */

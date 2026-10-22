@@ -61,7 +61,7 @@ pub fn list_audio_apps() -> Vec<AudioApp> {
 pub fn describe(path: &str) -> (String, String) {
     static CACHE: OnceLock<Mutex<HashMap<String, (String, String)>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(v) = cache.lock().unwrap().get(path) {
+    if let Some(v) = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(path) {
         return v.clone();
     }
     let name = file_description(path).unwrap_or_else(|| {
@@ -70,7 +70,7 @@ pub fn describe(path: &str) -> (String, String) {
     });
     let icon = icon_png(path).map(|png| format!("data:image/png;base64,{}", base64(&png))).unwrap_or_default();
     let v = (name, icon);
-    cache.lock().unwrap().insert(path.to_string(), v.clone());
+    cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(path.to_string(), v.clone());
     v
 }
 

@@ -40,7 +40,7 @@ impl Monitor {
     /// Добавляет стерео-сэмплы на воспроизведение. Не больше 0.3 с в очереди,
     /// чтобы прослушивание не отставало от микрофона.
     pub fn push(&self, samples: &[f32]) {
-        let mut q = self.queue.lock().unwrap();
+        let mut q = self.queue.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         q.extend(samples);
         let max = (self.rate as usize * 3 / 10) * CHANNELS;
         while q.len() > max {
@@ -80,7 +80,7 @@ fn render_loop(rate: u32, queue: &Mutex<VecDeque<f32>>, stop: &AtomicBool) -> Re
         }
         bytes.clear();
         {
-            let mut q = queue.lock().unwrap();
+            let mut q = queue.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             for _ in 0..space * CHANNELS {
                 // Пусто — тишина: устройству всегда нужно что-то отдать.
                 bytes.extend_from_slice(&q.pop_front().unwrap_or(0.0).to_le_bytes());

@@ -26,13 +26,46 @@ pub struct AppState {
 
 impl AppState {
     fn save(&self) {
-        let mut cfg = self.config.lock().unwrap();
+        let started = std::time::Instant::now();
+        let mut cfg = self.config.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         *cfg = self.engine.config(&cfg);
         if let Err(e) = cfg.save() {
-            eprintln!("не удалось сохранить настройки: {e}");
+            eprintln!("[{}] не удалось сохранить настройки: {e}", now());
+        }
+        if started.elapsed().as_millis() > 1000 {
+            eprintln!("[{}] сохранение настроек заняло {} мс", now(), started.elapsed().as_millis());
         }
     }
 }
+
+/// Местное время для журнала: «2026-10-22 11:52:49».
+pub fn now() -> String {
+    let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
+}
+
+/// В оконном приложении stderr никуда не выводится — направляем его в
+/// %APPDATA%\MicMix\micmix.log, чтобы ошибки (сохранение, захват, клавиши) можно было прочитать.
+#[cfg(not(debug_assertions))]
+fn log_to_file() {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::System::Console::{SetStdHandle, STD_ERROR_HANDLE};
+    let Some(dir) = config::data_dir() else { return };
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("micmix.log");
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > 1 << 20) {
+        let _ = std::fs::remove_file(&path); // больше 1 МБ — начинаем заново
+    }
+    let Ok(file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) else { return };
+    unsafe {
+        let _ = SetStdHandle(STD_ERROR_HANDLE, windows::Win32::Foundation::HANDLE(file.as_raw_handle()));
+    }
+    std::mem::forget(file); // дескриптор нужен до конца работы
+    eprintln!("=== [{}] MicMix {} запущен", now(), env!("CARGO_PKG_VERSION"));
+}
+
+#[cfg(debug_assertions)]
+fn log_to_file() {}
 
 /// Старая клавиша по умолчанию: совпадает с «выключить микрофон» в Discord.
 const OLD_DEFAULT_HOTKEY: &str = "Ctrl+Shift+M";
@@ -62,7 +95,7 @@ fn activate_running_instance() -> bool {
 /// После переключения mute — обновить галочку в трее и сообщить окну.
 pub fn sync_mute(app: &AppHandle, muted: bool) {
     let state = app.state::<AppState>();
-    if let Some(item) = state.tray_mute.lock().unwrap().as_ref() {
+    if let Some(item) = state.tray_mute.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref() {
         let _ = item.set_checked(muted);
     }
     let _ = app.emit("state-changed", ());
@@ -193,8 +226,12 @@ async fn add_sounds(state: State<'_, AppState>, paths: Vec<String>) -> Result<Ve
             continue;
         }
         let name = src.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or(file_name);
+        eprintln!("[{}] звук добавлен: {name}", now());
         let cfg = SoundConfig { id, name, file: copy.to_string_lossy().to_string(), gain: 1.0, hotkey: None };
         state.engine.add_sound(cfg, data, rate);
+    }
+    for e in &errors {
+        eprintln!("[{}] звук не добавлен: {e}", now());
     }
     state.save();
     Ok(errors)
@@ -275,8 +312,8 @@ async fn set_monitor_gain(state: State<'_, AppState>, gain: f32, save: bool) -> 
 
 #[tauri::command]
 async fn get_hotkeys(state: State<'_, AppState>) -> Result<hotkeys::HotkeysInfo, String> {
-    let cfg = state.config.lock().unwrap().clone();
-    let errors = state.bindings.lock().unwrap().errors.clone();
+    let cfg = state.config.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let errors = state.bindings.lock().unwrap_or_else(std::sync::PoisonError::into_inner).errors.clone();
     Ok(hotkeys::HotkeysInfo { master: cfg.mute_hotkey, apps: cfg.apps_hotkey, stop: cfg.stop_hotkey, errors })
 }
 
@@ -286,7 +323,7 @@ async fn get_hotkeys(state: State<'_, AppState>) -> Result<hotkeys::HotkeysInfo,
 async fn set_hotkey(app: AppHandle, state: State<'_, AppState>, target: String, hotkey: Option<String>) -> Result<(), String> {
     let hotkey = hotkey.filter(|h| !h.trim().is_empty());
     let set = |value: Option<String>| -> Option<String> {
-        let mut cfg = state.config.lock().unwrap();
+        let mut cfg = state.config.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         match target.as_str() {
             "master" => Some(std::mem::replace(&mut cfg.mute_hotkey, value.unwrap_or_default())).filter(|s| !s.is_empty()),
             "apps" => std::mem::replace(&mut cfg.apps_hotkey, value),
@@ -311,7 +348,7 @@ async fn set_hotkey(app: AppHandle, state: State<'_, AppState>, target: String, 
     };
     let old = set(hotkey);
     hotkeys::rebind(&app);
-    let error = state.bindings.lock().unwrap().errors.get(&target).cloned();
+    let error = state.bindings.lock().unwrap_or_else(std::sync::PoisonError::into_inner).errors.get(&target).cloned();
     if let Some(e) = error {
         set(old);
         hotkeys::rebind(&app);
@@ -332,7 +369,7 @@ struct MicsInfo {
 
 #[tauri::command]
 async fn list_mics(state: State<'_, AppState>) -> Result<MicsInfo, String> {
-    let tab_error = state.tab_error.lock().unwrap().clone();
+    let tab_error = state.tab_error.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
     Ok(MicsInfo { mics: mics::list_mics(), system: mics::system_info(), tab_error })
 }
 
@@ -417,7 +454,14 @@ fn main() {
     if activate_running_instance() {
         return;
     }
+    log_to_file();
     let config = Config::load();
+    eprintln!(
+        "[{}] настройки: {} приложений, {} звуков",
+        now(),
+        config.sources.len(),
+        config.sounds.len()
+    );
     let engine = Engine::start(&config);
 
     tauri::Builder::default()
@@ -444,16 +488,16 @@ fn main() {
 
             hotkeys::rebind(&handle);
             // Старая клавиша по умолчанию конфликтует с Discord — переезжаем на новую.
-            let master_failed = state.bindings.lock().unwrap().errors.contains_key("master");
-            if master_failed && state.config.lock().unwrap().mute_hotkey == OLD_DEFAULT_HOTKEY {
-                state.config.lock().unwrap().mute_hotkey = Config::default().mute_hotkey;
+            let master_failed = state.bindings.lock().unwrap_or_else(std::sync::PoisonError::into_inner).errors.contains_key("master");
+            if master_failed && state.config.lock().unwrap_or_else(std::sync::PoisonError::into_inner).mute_hotkey == OLD_DEFAULT_HOTKEY {
+                state.config.lock().unwrap_or_else(std::sync::PoisonError::into_inner).mute_hotkey = Config::default().mute_hotkey;
                 hotkeys::rebind(&handle);
                 state.save();
             }
 
             // Приём звука вкладки от расширения браузера.
             if let Err(e) = tab::start(state.engine.feed(TAB_ID)) {
-                *state.tab_error.lock().unwrap() = Some(e);
+                *state.tab_error.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(e);
             }
 
             let muted = state.engine.status().master_muted;
@@ -462,7 +506,7 @@ fn main() {
             let stop = MenuItem::with_id(app, "stop", "Остановить звуки", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &mute, &stop, &PredefinedMenuItem::separator(app)?, &quit])?;
-            *state.tray_mute.lock().unwrap() = Some(mute);
+            *state.tray_mute.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(mute);
 
             TrayIconBuilder::with_id("tray")
                 .icon(app.default_window_icon().cloned().ok_or("нет иконки")?)

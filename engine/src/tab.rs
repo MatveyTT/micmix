@@ -79,7 +79,7 @@ fn serve(stream: TcpStream, feed: &Feed) -> Result<(), String> {
                 samples.truncate(samples.len() / CHANNELS * CHANNELS);
                 let rate = feed.rate.load(Ordering::Acquire);
                 let data = resample(&samples, src_rate, rate);
-                let mut q = feed.queue.lock().unwrap();
+                let mut q = feed.queue.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 q.extend(data);
                 let max = (rate as usize / 2) * CHANNELS; // не больше 0.5 с
                 while q.len() > max {

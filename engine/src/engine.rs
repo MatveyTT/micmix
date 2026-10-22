@@ -166,7 +166,7 @@ fn capture_loop(
         }
         capture.read_from_device_to_deque(&mut bytes).map_err(|e| e.to_string())?;
         last_data_ms.store(started.elapsed().as_millis() as u64, Ordering::Release);
-        let mut q = queue.lock().unwrap();
+        let mut q = queue.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         while bytes.len() >= 4 {
             let b = [bytes.pop_front().unwrap(), bytes.pop_front().unwrap(), bytes.pop_front().unwrap(), bytes.pop_front().unwrap()];
             q.push_back(f32::from_le_bytes(b));
@@ -235,7 +235,7 @@ impl Source {
             (None, Some(f)) => f.queue.clone(),
             _ => return 0.0,
         };
-        let mut q = queue.lock().unwrap();
+        let mut q = queue.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut avail = q.len() / CHANNELS;
         let ms = |m: u32| (rate * m / 1000) as usize;
         if !self.primed {
@@ -324,7 +324,21 @@ impl Engine {
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let (st, sp) = (state.clone(), stop.clone());
-        let thread = std::thread::Builder::new().name("mixer".into()).spawn(move || mixer_loop(&st, &sp)).ok();
+        let thread = std::thread::Builder::new()
+            .name("mixer".into())
+            .spawn(move || {
+                // Ошибка в микшере не должна насовсем выключать звук: текст паники уже ушёл
+                // в stderr (журнал приложения), а микшер запускается заново.
+                while !sp.load(Ordering::Acquire) {
+                    let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| mixer_loop(&st, &sp)));
+                    if run.is_ok() {
+                        break;
+                    }
+                    eprintln!("[mixer] упал — перезапускаю через секунду");
+                    std::thread::sleep(Duration::from_secs(1));
+                }
+            })
+            .ok();
         Engine { state, stop, thread }
     }
 
@@ -332,7 +346,7 @@ impl Engine {
 
     /// Добавляет приложение по имени exe (или `TONE_ID` / `TAB_ID`). Повторное добавление ничего не делает.
     pub fn add_source(&self, exe: &str, name: &str) {
-        let mut s = self.state.lock().unwrap();
+        let mut s = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let exe = exe.to_lowercase();
         if s.sources.iter().any(|x| x.cfg.exe == exe) {
             return;
@@ -341,11 +355,11 @@ impl Engine {
     }
 
     pub fn remove_source(&self, exe: &str) {
-        self.state.lock().unwrap().sources.retain(|x| x.cfg.exe != exe);
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).sources.retain(|x| x.cfg.exe != exe);
     }
 
     fn with_source<R>(&self, exe: &str, f: impl FnOnce(&mut SourceConfig) -> R) -> Option<R> {
-        self.state.lock().unwrap().sources.iter_mut().find(|x| x.cfg.exe == exe).map(|x| f(&mut x.cfg))
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).sources.iter_mut().find(|x| x.cfg.exe == exe).map(|x| f(&mut x.cfg))
     }
 
     pub fn set_gain(&self, exe: &str, gain: f32) {
@@ -370,7 +384,7 @@ impl Engine {
 
     /// Очередь для внешнего источника (вкладки браузера). Источник сам её подхватит.
     pub fn feed(&self, id: &str) -> Arc<Feed> {
-        let mut s = self.state.lock().unwrap();
+        let mut s = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let rate = s.rate;
         s.feeds
             .entry(id.to_string())
@@ -387,55 +401,55 @@ impl Engine {
     // ---------- Общие ----------
 
     pub fn set_master_gain(&self, gain: f32) {
-        self.state.lock().unwrap().master_gain = gain.clamp(0.0, 2.0);
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).master_gain = gain.clamp(0.0, 2.0);
     }
 
     pub fn set_master_muted(&self, muted: bool) {
-        self.state.lock().unwrap().master_muted = muted;
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).master_muted = muted;
     }
 
     /// Переключает общий mute, возвращает новое значение.
     pub fn toggle_master_muted(&self) -> bool {
-        let mut s = self.state.lock().unwrap();
+        let mut s = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         s.master_muted = !s.master_muted;
         s.master_muted
     }
 
     pub fn set_apps_muted(&self, muted: bool) {
-        self.state.lock().unwrap().apps_muted = muted;
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).apps_muted = muted;
     }
 
     /// Переключает «все приложения», возвращает новое значение.
     pub fn toggle_apps_muted(&self) -> bool {
-        let mut s = self.state.lock().unwrap();
+        let mut s = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         s.apps_muted = !s.apps_muted;
         s.apps_muted
     }
 
     /// Текущая частота микшера (частота микрофона) — для подготовки звуков.
     pub fn sample_rate(&self) -> u32 {
-        self.state.lock().unwrap().rate
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).rate
     }
 
     // ---------- Звуки ----------
 
     /// Добавляет звук; `data` — уже загруженные сэмплы в частоте `rate` (проверка файла).
     pub fn add_sound(&self, cfg: SoundConfig, data: Vec<f32>, rate: u32) {
-        let mut s = self.state.lock().unwrap();
+        let mut s = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         s.sounds.retain(|x| x.cfg.id != cfg.id);
         s.sounds.push(Sound { cfg, data: Some(Arc::new(data)), rate });
     }
 
     /// Убирает звук, возвращает его файл (чтобы удалить копию).
     pub fn remove_sound(&self, id: &str) -> Option<String> {
-        let mut s = self.state.lock().unwrap();
+        let mut s = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         s.voices.retain(|v| v.id != id);
         let pos = s.sounds.iter().position(|x| x.cfg.id == id)?;
         Some(s.sounds.remove(pos).cfg.file)
     }
 
     fn with_sound<R>(&self, id: &str, f: impl FnOnce(&mut SoundConfig) -> R) -> Option<R> {
-        self.state.lock().unwrap().sounds.iter_mut().find(|x| x.cfg.id == id).map(|x| f(&mut x.cfg))
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).sounds.iter_mut().find(|x| x.cfg.id == id).map(|x| f(&mut x.cfg))
     }
 
     pub fn set_sound_gain(&self, id: &str, gain: f32) {
@@ -453,7 +467,7 @@ impl Engine {
     /// Проигрывает звук с начала (если уже играет — перезапускает, как в Soundpad).
     pub fn play_sound(&self, id: &str) -> Result<(), String> {
         let (file, rate, cached) = {
-            let s = self.state.lock().unwrap();
+            let s = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let snd = s.sounds.iter().find(|x| x.cfg.id == id).ok_or("звук не найден")?;
             let cached = snd.data.clone().filter(|_| snd.rate == s.rate);
             (snd.cfg.file.clone(), s.rate, cached)
@@ -463,7 +477,7 @@ impl Engine {
             Some(d) => d,
             None => Arc::new(sounds::load(Path::new(&file), rate)?),
         };
-        let mut s = self.state.lock().unwrap();
+        let mut s = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(snd) = s.sounds.iter_mut().find(|x| x.cfg.id == id) {
             snd.data = Some(data.clone());
             snd.rate = rate;
@@ -474,25 +488,25 @@ impl Engine {
     }
 
     pub fn stop_sounds(&self) {
-        self.state.lock().unwrap().voices.clear();
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).voices.clear();
     }
 
     pub fn set_sounds_gain(&self, gain: f32) {
-        self.state.lock().unwrap().sounds_gain = gain.clamp(0.0, 2.0);
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).sounds_gain = gain.clamp(0.0, 2.0);
     }
 
     pub fn set_monitor(&self, on: bool) {
-        self.state.lock().unwrap().monitor_on = on;
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).monitor_on = on;
     }
 
     pub fn set_monitor_gain(&self, gain: f32) {
-        self.state.lock().unwrap().monitor_gain = gain.clamp(0.0, 2.0);
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).monitor_gain = gain.clamp(0.0, 2.0);
     }
 
     // ---------- Состояние ----------
 
     pub fn status(&self) -> EngineStatus {
-        let s = self.state.lock().unwrap();
+        let s = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         EngineStatus {
             sources: s
                 .sources
@@ -541,7 +555,7 @@ impl Engine {
     /// Текущие настройки (без тестового бипа) — для сохранения. Горячие клавиши
     /// общих действий хранит приложение — они берутся из `base`.
     pub fn config(&self, base: &Config) -> Config {
-        let s = self.state.lock().unwrap();
+        let s = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         Config {
             sources: s.sources.iter().filter(|x| !x.is_tone()).map(|x| x.cfg.clone()).collect(),
             sounds: s.sounds.iter().map(|x| x.cfg.clone()).collect(),
@@ -575,8 +589,9 @@ fn mixer_loop(state: &Mutex<State>, stop: &AtomicBool) {
 
     while !stop.load(Ordering::Acquire) {
         std::thread::sleep(Duration::from_millis(5));
-        let mut s = state.lock().unwrap();
-        let s = &mut *s;
+        let mut guard = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let s = &mut *guard;
+        let tick = Instant::now();
 
         // Связь с APO: секция появляется, когда кто-то пишет с микрофона.
         if s.ring.is_none() && last_ring_try.map_or(true, |t| t.elapsed() > Duration::from_secs(1)) {
@@ -657,6 +672,9 @@ fn mixer_loop(state: &Mutex<State>, stop: &AtomicBool) {
         }
         let frames = due.saturating_sub(produced) as usize;
         if frames == 0 {
+            if tick.elapsed() > Duration::from_millis(500) {
+                eprintln!("[mixer] обслуживание источников заняло {} мс", tick.elapsed().as_millis());
+            }
             continue;
         }
         produced += frames as u64;
@@ -725,6 +743,11 @@ fn mixer_loop(state: &Mutex<State>, stop: &AtomicBool) {
 
         if let Some(r) = &mut s.ring {
             r.write(&mix);
+        }
+        // Сторожок: микшер держит блокировку, пока работает, — долгий цикл тормозит и окно.
+        let took = tick.elapsed();
+        if took > Duration::from_millis(500) {
+            eprintln!("[mixer] цикл занял {} мс", took.as_millis());
         }
     }
 }

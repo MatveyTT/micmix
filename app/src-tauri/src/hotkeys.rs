@@ -54,7 +54,7 @@ pub struct HotkeysInfo {
 /// Все привязки из настроек: (клавиша, действие).
 fn collect(app: &AppHandle) -> Vec<(String, Action)> {
     let state = app.state::<AppState>();
-    let cfg = state.config.lock().unwrap().clone();
+    let cfg = state.config.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
     let status = state.engine.status();
     let mut list = Vec::new();
     if !cfg.mute_hotkey.is_empty() {
@@ -113,7 +113,10 @@ pub fn rebind(app: &AppHandle) {
             }
         }
     }
-    *app.state::<AppState>().bindings.lock().unwrap() = b;
+    for (target, e) in &b.errors {
+        eprintln!("[{}] клавиша {target}: {e}", crate::now());
+    }
+    *app.state::<AppState>().bindings.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = b;
 }
 
 /// Человеческое имя привязки для сообщения «уже назначена (...)».
@@ -137,7 +140,7 @@ fn describe_target(app: &AppHandle, target: &str) -> String {
 
 /// Нажата клавиша с этим id.
 pub fn on_pressed(app: &AppHandle, id: u32) {
-    let action = app.state::<AppState>().bindings.lock().unwrap().by_id.get(&id).cloned();
+    let action = app.state::<AppState>().bindings.lock().unwrap_or_else(std::sync::PoisonError::into_inner).by_id.get(&id).cloned();
     let Some(action) = action else { return };
     let state = app.state::<AppState>();
     match action {
