@@ -38,6 +38,10 @@ $CapRoot    = 'SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture
 
 $PK_SFX          = '{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},5'   # PKEY_FX_StreamEffectClsid
 $PK_CompositeSFX = '{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},13'  # PKEY_CompositeFX_StreamEffectClsid
+$PK_Association  = '{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},0'   # PKEY_FX_Association: к какому узлу применять
+$AnyNode         = '{00000000-0000-0000-0000-000000000000}'     # KSNODETYPE_ANY
+$PK_SfxModes     = '{d3993a3f-99c2-4402-b5ec-a92a0367664b},5'   # PKEY_SFX_ProcessingModes_Supported_For_Streaming
+$ModeDefault     = '{C18E2F7E-933D-4965-B7D1-1EEF228D2AF3}'     # AUDIO_SIGNALPROCESSINGMODE_DEFAULT
 $PK_DisableSysFx = '{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},5'   # «Отключить все улучшения»
 $PK_FriendlyName = '{a45c254e-df1c-4efd-8020-67d146a850e0},2'   # «Микрофон»
 $PK_AdapterName  = '{b3f8fa53-0004-438e-9003-51a46e139bfc},6'   # «Realtek(R) Audio», «HyperX ...»
@@ -296,10 +300,27 @@ function Install-Apo {
         if (-not (Test-Path $backup)) {
             @{
                 Device = "$($ep.Name) — $($ep.Adapter)"
-                Fx     = @((Get-Entry $fx $PK_SFX), (Get-Entry $fx $PK_CompositeSFX))
+                Fx     = @((Get-Entry $fx $PK_SFX), (Get-Entry $fx $PK_CompositeSFX), (Get-Entry $fx $PK_Association), (Get-Entry $fx $PK_SfxModes))
                 Props  = @((Get-Entry $props $PK_DisableSysFx))
             } | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 $backup
+        } else {
+            # Копия от старой версии установщика без новых ключей — дописываем их исходные значения.
+            $saved = Get-Content -Raw -Encoding UTF8 $backup | ConvertFrom-Json
+            $changed = $false
+            foreach ($name in $PK_Association, $PK_SfxModes) {
+                if (-not (@($saved.Fx) | Where-Object { $_.Name -eq $name })) {
+                    $saved.Fx = @($saved.Fx) + (Get-Entry $fx $name)
+                    $changed = $true
+                }
+            }
+            if ($changed) { $saved | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 $backup }
         }
+
+        # У микрофонов без своих эффектов (USB-микрофоны на стандартном драйвере) нет ни привязки
+        # эффектов к узлу устройства, ни списка режимов — без них Windows молча пропускает APO.
+        # Прописываем «любой узел» и режим DEFAULT, как это делает Equalizer APO.
+        if (-not $fx.GetValue($PK_Association)) { $fx.SetValue($PK_Association, $AnyNode, 'String') }
+        if (-not $fx.GetValue($PK_SfxModes)) { $fx.SetValue($PK_SfxModes, [string[]]@($ModeDefault), 'MultiString') }
 
         # Ставим наш APO первым в цепочку, эффекты драйвера (если были) оставляем после него.
         $chain = @($fx.GetValue($PK_CompositeSFX)) | Where-Object { $_ }
