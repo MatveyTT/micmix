@@ -58,7 +58,7 @@
   Консоль: `target\release\micmix-engine.exe apps|mics|tone|capture <exe>...`.
 - `app/` — Tauri 2.12 + Svelte 5 + Vite 8 + Tailwind 4. `app/src-tauri/src/main.rs`: команды, трей
   (открыть / mute / выход), крестик прячет в трей, глобальная клавиша mute (по умолчанию `Ctrl+Alt+M`; старая `Ctrl+Shift+M` конфликтует с Discord и при занятости
-  автоматически меняется; сменить — `set_hotkey`, в интерфейсе `Hotkey.svelte`), одна копия — мьютекс `LocalMicMix.App`
+  автоматически меняется; сменить — `set_hotkey`, в интерфейсе `Hotkey.svelte`), одна копия — мьютекс `Local\MicMix.App`
   (два движка портили бы общую память),
   `apo_install` запускает `install-apo.ps1 -Quiet -EndpointId {guid} [-Uninstall]` через UAC.
   Интерфейс: `app/src/App.svelte` + `app/src/lib/*`. Иконка рисуется `app/make-icon.ps1`.
