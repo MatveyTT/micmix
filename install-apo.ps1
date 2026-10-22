@@ -198,14 +198,14 @@ function Test-ProtectedAudioDG {
     $v = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio' `
             -Name DisableProtectedAudioDG -ErrorAction SilentlyContinue).DisableProtectedAudioDG
     if ($v -eq 1) { return }
-    Write-Warning 'Защита аудиодвижка включена: Windows не загрузит неподписанную DLL.'
-    if ($Quiet -or (Read-Host 'Отключить защиту (DisableProtectedAudioDG = 1)? Потребуется перезагрузка. [y/n]') -eq 'y') {
+    Write-Warning 'Разрешение на неподписанные звуковые эффекты (DisableProtectedAudioDG) не включено.'
+    if ($Quiet -or (Read-Host 'Включить (DisableProtectedAudioDG = 1)? Может понадобиться перезагрузка. [y/n]') -eq 'y') {
         # Только создать ключ, если его нет: New-Item -Force на реестре стирает ключ целиком —
         # вместе с системными настройками звука, которые там лежат.
         $audioKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio'
         if (-not (Test-Path $audioKey)) { New-Item $audioKey | Out-Null }
         New-ItemProperty $audioKey -Name DisableProtectedAudioDG -PropertyType DWord -Value 1 -Force | Out-Null
-        Write-Host 'Готово. После установки перезагрузи компьютер.' -ForegroundColor Yellow
+        Write-Host 'Включено. Если эффект не заработает сразу — перезагрузи компьютер (ключ читается при загрузке).' -ForegroundColor Yellow
     }
 }
 

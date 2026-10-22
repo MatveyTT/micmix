@@ -73,13 +73,15 @@ static std::atomic<long> g_objects{0};
 // ---------- Общая память с движком ----------
 // Создаёт (или открывает уже созданную) секцию с кольцевым буфером.
 // Права: службы и администраторы — всё, вошедшие в систему пользователи — чтение и запись,
-// чтобы движок, запущенный без прав администратора, мог туда писать.
+// чтобы движок, запущенный без прав администратора, мог туда писать. Плюс «песочные» процессы
+// (ALL APPLICATION PACKAGES и ALL RESTRICTED APPLICATION PACKAGES): в новых Windows audiodg
+// может работать в такой песочнице, и без этих записей секция была бы ему недоступна.
 static micmix::RingHeader* OpenRing(HANDLE* outMapping)
 {
     *outMapping = nullptr;
     SECURITY_ATTRIBUTES sa{ sizeof(sa), nullptr, FALSE };
     if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            L"D:(A;;GA;;;SY)(A;;GA;;;LS)(A;;GA;;;BA)(A;;GRGW;;;IU)",
+            L"D:(A;;GA;;;SY)(A;;GA;;;LS)(A;;GA;;;BA)(A;;GRGW;;;IU)(A;;GA;;;AC)(A;;GA;;;S-1-15-2-2)",
             SDDL_REVISION_1, &sa.lpSecurityDescriptor, nullptr))
     {
         Log("Ring: bad security descriptor, err=%lu", GetLastError());

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "MicMix",
-  "version": "0.3.2",
+  "version": "0.3.4",
   "identifier": "io.github.matveytt.micmix",
   "build": {
     "frontendDist": "../dist",

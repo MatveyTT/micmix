@@ -23,7 +23,8 @@
         text: uninstall
           ? `MicMix снят с «${mic.name}», настройки микрофона восстановлены.`
           : `MicMix установлен на «${mic.name}».` +
-            (info?.system.unsigned_apo_allowed ? "" : " Перезагрузи компьютер, чтобы Windows начала его загружать."),
+            " Проверь кнопкой «Тестовый бип»." +
+            (info?.system.unsigned_apo_allowed ? "" : " Если бипа в микрофоне нет — перезагрузи компьютер."),
       };
     } catch (e) {
       message = { ok: false, text: String(e) };
@@ -49,13 +50,9 @@
     <div class="flex gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
       <Icon name="alert" size={18} class="mt-0.5 shrink-0 text-amber-400" />
       <div>
-        Windows сейчас не загружает неподписанные звуковые эффекты. При установке MicMix включит это
-        (<code class="text-amber-200">DisableProtectedAudioDG</code>), после чего нужна перезагрузка.
-        {#if info.system.windows_build >= 26200}
-          <div class="mt-1 text-amber-200">
-            На этой версии Windows (сборка {info.system.windows_build}) такой способ уже не работает — нужна подписанная версия.
-          </div>
-        {/if}
+        При установке MicMix разрешит Windows загружать неподписанные звуковые эффекты
+        (<code class="text-amber-200">DisableProtectedAudioDG</code>). Обычно эффект начинает работать сразу;
+        если после установки звука нет — перезагрузи компьютер.
       </div>
     </div>
   {/if}

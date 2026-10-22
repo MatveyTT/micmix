@@ -1910,7 +1910,7 @@ dependencies = [
 
 [[package]]
 name = "micmix"
-version = "0.3.2"
+version = "0.3.4"
 dependencies = [
  "micmix-engine",
  "serde",
@@ -1924,7 +1924,7 @@ dependencies = [
 
 [[package]]
 name = "micmix-engine"
-version = "0.3.2"
+version = "0.3.4"
 dependencies = [
  "png",
  "serde",
