@@ -1,0 +1,62 @@
+# Сборка релиза: по тегу v* (например, v0.3.0) GitHub собирает APO, приложение,
+# установщик и архив расширения и публикует их на странице Releases.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: # ручной запуск — только сборка, без публикации
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: APO (C++, MSVC)
+        shell: cmd
+        env:
+          MICMIX_NOPAUSE: "1"
+        run: build.bat
+
+      - name: Тесты ядра
+        run: cargo test --release -p micmix-engine
+
+      - name: Приложение и установщик
+        working-directory: app
+        run: |
+          npm ci
+          npx tauri build
+
+      - name: Архив расширения для браузера
+        shell: pwsh
+        run: Compress-Archive -Path extension/* -DestinationPath MicMix-extension.zip
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: MicMix
+          path: |
+            target/release/bundle/nsis/*.exe
+            MicMix-extension.zip
+
+      - name: Публикация релиза
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          body_path: .github/release-notes.md
+          files: |
+            target/release/bundle/nsis/*.exe
+            MicMix-extension.zip

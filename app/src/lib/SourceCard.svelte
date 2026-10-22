@@ -1,10 +1,11 @@
 <script>
+  import HotkeyInput from "./HotkeyInput.svelte";
   import Icon from "./Icon.svelte";
   import Meter from "./Meter.svelte";
   import Volume from "./Volume.svelte";
 
-  // source: { exe, name, icon, gain, muted, level, running }
-  let { source, ongain, onmute, onremove } = $props();
+  // source: { exe, name, icon, gain, muted, hotkey, level, running }
+  let { source, hotkeyError = null, ongain, onmute, onremove, onhotkey } = $props();
   let gain = $state(1); // сразу заменит эффект ниже
   let dragging = $state(false);
   // Пока пользователь двигает ползунок, не перетираем его значение опросом.
@@ -22,14 +23,22 @@
       {#if source.icon}
         <img src={source.icon} alt="" class="h-8 w-8" />
       {:else}
-        <Icon name={source.exe === "micmix:tone" ? "wave" : "app"} size={22} class="text-muted" />
+        <Icon name={source.exe === "micmix:tone" ? "wave" : source.exe === "micmix:tab" ? "globe" : "app"} size={22} class="text-muted" />
       {/if}
     </div>
     <div class="min-w-0 flex-1">
       <div class="truncate font-medium">{source.name}</div>
       <div class="flex items-center gap-1.5 text-xs text-muted">
         <span class="h-1.5 w-1.5 rounded-full {source.running ? 'bg-emerald-400' : 'bg-amber-400'}"></span>
-        {source.running ? (source.exe === "micmix:tone" ? "880 Гц, раз в секунду" : source.exe) : "не запущено — жду"}
+        {#if source.exe === "micmix:tone"}
+          880 Гц, раз в секунду
+        {:else if source.exe === "micmix:tab"}
+          <span class="truncate" title="Щёлкни значок MicMix на нужной вкладке браузера">
+            {source.running ? "расширение подключено" : "жду расширение в браузере"}
+          </span>
+        {:else}
+          {source.running ? source.exe : "не запущено — жду"}
+        {/if}
       </div>
     </div>
     <button
@@ -42,6 +51,13 @@
   </div>
 
   <Meter level={source.level} muted={source.muted} />
+
+  {#if source.exe !== "micmix:tone"}
+    <div class="-mb-1 flex items-center gap-2 text-xs text-muted">
+      <span>вкл/выкл:</span>
+      <HotkeyInput value={source.hotkey} error={hotkeyError} compact onset={(v) => onhotkey?.(source.exe, v)} />
+    </div>
+  {/if}
 
   <div class="flex items-center gap-2">
     <button

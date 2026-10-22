@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "MicMix",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "identifier": "io.github.matveytt.micmix",
   "build": {
     "frontendDist": "../dist",
@@ -32,7 +32,8 @@
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
     "resources": {
       "../../install-apo.ps1": "install-apo.ps1",
-      "../../build/MicMixApo.dll": "build/MicMixApo.dll"
+      "../../build/MicMixApo.dll": "build/MicMixApo.dll",
+      "../../extension/": "extension/"
     },
     "windows": {
       "nsis": {

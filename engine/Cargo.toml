@@ -1,6 +1,6 @@
 [package]
 name = "micmix-engine"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "MicMix: захват звука приложений, микшер и передача в APO микрофона"
 
@@ -17,6 +17,8 @@ wasapi = "0.26.0"
 png = "0.18.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1"
+symphonia = { version = "0.6.1", features = ["mp3", "aac", "isomp4"] }
+tungstenite = "0.30.0"
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

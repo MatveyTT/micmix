@@ -37,9 +37,13 @@
 - Микрофоны: встроенный (аудио Senary/Realtek — уточни по списку) и гарнитура HyperX.
   Первые тесты — **только на встроенном**, чтобы HyperX оставался рабочим.
 
-## Текущий статус (этапы 1–2: приложение)
+## Текущий статус (v0.3: приложения, звуки-кнопки, клавиши, вкладка браузера, релизы)
 
 Структура: cargo-workspace в корне (`Cargo.toml`, общий `target\`), члены `engine` и `app/src-tauri`.
+Репозиторий: https://github.com/MatveyTT/micmix (ветка `main`), коммиты с почтой
+`215179674+MatveyTT@users.noreply.github.com` (задана в `.git/config`). Релиз: тег `v*` →
+`.github/workflows/release.yml` (windows-latest) собирает и публикует установщик + `MicMix-extension.zip`,
+описание — `.github/release-notes.md`.
 
 - `src/MicMixApo.cpp` — APO: читает звук из общей памяти и подмешивает в микрофон (сам не пищит).
   CLSID `{04206D4E-6467-414B-B052-6AA2220324A5}` (тот же в `install-apo.ps1` и `engine/src/mics.rs`).
@@ -49,21 +53,36 @@
   право на `Global\`), движок только открывает и раз в секунду пробует, пока её нет. APO пишет в
   `micSampleRate` частоту микрофона, движок захватывает приложения сразу в ней (WASAPI autoconvert) —
   ресемплер не нужен. Если частоты всё же разные, APO не подмешивает (пишет в `UnlockForProcess`).
-- `engine/` — ядро `micmix_core` (`wasapi 0.26`, `windows 0.62`, `png`, `serde`):
-  `engine.rs` — микшер (поток захвата на приложение + поток микшера раз в 5 мс, громкость/mute на источник,
-  общая громкость, лимитер −1 дБFS, уровни, тестовый бип = источник `micmix:tone`, перезапуск захвата
-  при перезапуске приложения); `apps.rs` — приложения со звуковыми сессиями, иконки (ExtractIconEx → PNG),
-  выбор процесса для захвата (процесс с сессией → самый верхний предок с тем же именем);
-  `mics.rs` — микрофоны и стоит ли APO (реестр); `config.rs` — `%APPDATA%\MicMix\config.json`.
-  Консоль: `target\release\micmix-engine.exe apps|mics|tone|capture <exe>...`.
-- `app/` — Tauri 2.12 + Svelte 5 + Vite 8 + Tailwind 4. `app/src-tauri/src/main.rs`: команды, трей
-  (открыть / mute / выход), крестик прячет в трей, глобальная клавиша mute (по умолчанию `Ctrl+Alt+M`; старая `Ctrl+Shift+M` конфликтует с Discord и при занятости
-  автоматически меняется; сменить — `set_hotkey`, в интерфейсе `Hotkey.svelte`), одна копия — мьютекс `Local\MicMix.App`
-  (два движка портили бы общую память),
+- `engine/` — ядро `micmix_core` (`wasapi 0.26`, `windows 0.62`, `symphonia 0.6`, `tungstenite 0.30`, `png`, `serde`):
+  `engine.rs` — микшер (поток захвата на приложение + поток микшера раз в 5 мс). Источники: приложение (exe),
+  `micmix:tone` (тест), `micmix:tab` (вкладка, очередь `Feed`). Громкость/mute/клавиша на источник,
+  `apps_muted` (все приложения), общая громкость и mute, лимитер −1 дБFS. Звуки-кнопки: `Voice` поверх
+  `Arc<Vec<f32>>`, повторное нажатие перезапускает; копия звуков → `monitor.rs` (WASAPI render на устройство
+  по умолчанию, поток живёт только пока звучит + 3 с). Захват перезапускается, если процесс умер, если звук
+  теперь у другого процесса с тем же именем, или если приложение играет, а захват 2 с без данных.
+  `apps.rs` — сессии, иконки (ExtractIconEx → PNG), выбор процесса: процесс с сессией → его родитель,
+  если у родителя то же имя (Chrome), но **не выше**: Windows включает в process loopback только прямых детей,
+  внуки не попадают (проверено). `sounds.rs` — декодирование symphonia → стерео → линейный ресемплинг.
+  `tab.rs` — WebSocket 127.0.0.1:47823, принимает только Origin `chrome-extension://`/`moz-extension://`
+  (сайты получают 403). `mics.rs` — микрофоны и стоит ли APO; `config.rs` — `%APPDATA%\MicMix\config.json`
+  (запись через .tmp + rename, BOM при чтении допускается), копии звуков — `%APPDATA%\MicMix\sounds`.
+  Консоль: `target\release\micmix-engine.exe apps|mics|tone|capture <exe>|play <файл> [--loop]`.
+  **Не запускай консольный движок, пока работает приложение** — два писателя в одну общую память.
+- `app/` — Tauri 2.12 + Svelte 5 + Vite 8 + Tailwind 4 + plugin-dialog 2.8. `main.rs`: команды, трей
+  (открыть / mute / стоп звуки / выход), крестик прячет в трей, одна копия — мьютекс `Local\MicMix.App`,
   `apo_install` запускает `install-apo.ps1 -Quiet -EndpointId {guid} [-Uninstall]` через UAC.
-  Интерфейс: `app/src/App.svelte` + `app/src/lib/*`. Иконка рисуется `app/make-icon.ps1`.
-  Запуск: `cd app; npm run tauri dev`, сборка установщика: `npm run tauri build` (NSIS, ресурсы —
-  `install-apo.ps1` и `build\MicMixApo.dll`, поэтому сначала `build.bat`).
+  `hotkeys.rs` — все привязки (master | apps | stop | source:<exe> | sound:<id>) перерегистрируются после
+  любого изменения, ошибки (занята / повтор) — по ключу привязки. По умолчанию mute — `Ctrl+Alt+M`;
+  старая `Ctrl+Shift+M` (занята Discord) при занятости меняется сама. F12 Windows не отдаёт — интерфейс её не
+  принимает. Интерфейс: `App.svelte` (вкладки Приложения / Звуки / Микрофон, перетаскивание файлов),
+  `lib/SoundsPanel.svelte`, `lib/HotkeyInput.svelte`, `lib/SourceCard.svelte`, `lib/AddSourceDialog.svelte`.
+  Сборка: `cd app; npx tauri build` (NSIS; ресурсы — `install-apo.ps1`, `build\MicMixApo.dll`, `extension\`,
+  поэтому сначала `build.bat`). Обычный `cargo build -p micmix` даёт exe, который ищет dev-сервер — для
+  проверки окна нужен `tauri build`.
+- `extension/` — MV3: щелчок по значку → `tabCapture` → offscreen-документ → AudioWorklet → WebSocket
+  (сначала `{"rate":N}`, потом float32 стерео). Звук вкладки возвращается в колонки.
+- Проверки без пользователя: `captest` + сценарии из прошлых сессий (горячие клавиши жмутся `keybd_event`,
+  вкладка имитируется `ClientWebSocket` с `Origin: chrome-extension://...`). Тестовые `.ps1` — тоже с BOM.
 - Rust у пользователя: 1.99.1 из .msi, подключён в rustup как тулчейн `msi` (по умолчанию). Сеть медленная
   (~100 КБ/с), rustup-загрузки зависали — новые тулчейны/компоненты лучше не качать без нужды.
   `cargo fetch` без `--target x86_64-pc-windows-msvc` качает и линуксовые крейты — не надо.

@@ -4,7 +4,17 @@
   import Icon from "./Icon.svelte";
 
   // added: Set имён exe, которые уже в микшере.
-  let { added, onadd, onclose } = $props();
+  let { added, tabError = null, onadd, onclose } = $props();
+  let extensionHint = $state("");
+
+  async function openExtension() {
+    try {
+      const dir = await invoke("open_extension_folder");
+      extensionHint = `Папка открыта: ${dir}. В браузере: chrome://extensions → «Режим разработчика» → «Загрузить распакованное» → эта папка.`;
+    } catch (e) {
+      extensionHint = String(e);
+    }
+  }
   let apps = $state([]);
   let loading = $state(true);
   let manual = $state("");
@@ -58,6 +68,32 @@
     </div>
 
     <div class="min-h-40 flex-1 overflow-y-auto p-2">
+      <!-- Отдельная вкладка браузера — через расширение MicMix -->
+      <div class="mb-1 rounded-xl border border-line/60 bg-panel-2/40 p-1">
+        <button
+          class="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition hover:bg-panel-2 disabled:opacity-50"
+          disabled={added.has("micmix:tab") || !!tabError}
+          onclick={() => onadd?.("micmix:tab", "Вкладка браузера")}
+        >
+          <div class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-accent to-accent-2 text-white">
+            <Icon name="globe" size={18} />
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-medium">Вкладка браузера</div>
+            <div class="truncate text-xs text-muted">
+              {tabError ? `недоступно: ${tabError}` : "одна вкладка, а не весь браузер — нужно расширение MicMix"}
+            </div>
+          </div>
+          {#if added.has("micmix:tab")}<Icon name="check" size={16} class="text-emerald-400" />{/if}
+        </button>
+        <button class="flex items-center gap-1.5 px-2 pb-1 text-xs text-accent hover:underline" onclick={openExtension}>
+          <Icon name="folder" size={12} /> Установить расширение в браузер
+        </button>
+        {#if extensionHint}
+          <div class="px-2 pb-1 text-xs text-muted">{extensionHint}</div>
+        {/if}
+      </div>
+
       {#if apps.length === 0 && !loading}
         <div class="px-4 py-10 text-center text-sm text-muted">
           Ничего не играет. Включи музыку или видео — приложение появится здесь.

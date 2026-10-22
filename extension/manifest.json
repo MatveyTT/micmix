@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "MicMix — вкладка в микрофон",
+  "short_name": "MicMix",
+  "version": "0.3.0",
+  "description": "Транслирует звук текущей вкладки в микрофон через приложение MicMix.",
+  "minimum_chrome_version": "116",
+  "permissions": ["tabCapture", "offscreen"],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_title": "MicMix: транслировать вкладку в микрофон",
+    "default_icon": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" }
+  },
+  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" }
+}

@@ -11,26 +11,69 @@ pub struct SourceConfig {
     pub name: String,
     pub gain: f32,
     pub muted: bool,
+    /// Горячая клавиша «включить/выключить этот источник».
+    #[serde(default)]
+    pub hotkey: Option<String>,
+}
+
+/// Звук для кнопки, как в Soundpad.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SoundConfig {
+    pub id: String,
+    pub name: String,
+    /// Копия файла в %APPDATA%\MicMix\sounds — исходный можно удалить.
+    pub file: String,
+    pub gain: f32,
+    #[serde(default)]
+    pub hotkey: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub sources: Vec<SourceConfig>,
+    pub sounds: Vec<SoundConfig>,
     pub master_gain: f32,
     pub master_muted: bool,
-    /// Горячая клавиша «выключить/включить звук в микрофоне».
+    /// Выключены все приложения (звуки при этом играют).
+    pub apps_muted: bool,
+    pub sounds_gain: f32,
+    /// Слышать звуки самому — в наушниках/колонках по умолчанию.
+    pub monitor: bool,
+    pub monitor_gain: f32,
+    /// Горячая клавиша «выключить/включить весь звук в микрофоне».
     pub mute_hotkey: String,
+    /// Горячая клавиша «все приложения вкл/выкл».
+    pub apps_hotkey: Option<String>,
+    /// Горячая клавиша «остановить все звуки».
+    pub stop_hotkey: Option<String>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { sources: Vec::new(), master_gain: 0.7, master_muted: false, mute_hotkey: "Ctrl+Alt+M".into() }
+        Config {
+            sources: Vec::new(),
+            sounds: Vec::new(),
+            master_gain: 0.7,
+            master_muted: false,
+            apps_muted: false,
+            sounds_gain: 0.8,
+            monitor: true,
+            monitor_gain: 0.5,
+            mute_hotkey: "Ctrl+Alt+M".into(),
+            apps_hotkey: None,
+            stop_hotkey: None,
+        }
     }
 }
 
+/// Папка настроек: %APPDATA%\MicMix.
+pub fn data_dir() -> Option<PathBuf> {
+    std::env::var_os("APPDATA").map(|d| PathBuf::from(d).join("MicMix"))
+}
+
 fn path() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|d| PathBuf::from(d).join("MicMix").join("config.json"))
+    data_dir().map(|d| d.join("config.json"))
 }
 
 impl Config {
@@ -48,6 +91,9 @@ impl Config {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }
         let json = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        std::fs::write(p, json).map_err(|e| e.to_string())
+        // Сначала во временный файл: если компьютер выключится посреди записи, настройки не пропадут.
+        let tmp = p.with_extension("json.tmp");
+        std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
+        std::fs::rename(tmp, p).map_err(|e| e.to_string())
     }
 }

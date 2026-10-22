@@ -144,30 +144,29 @@ fn session_pids() -> Vec<(u32, bool)> {
 /// Какой процесс захватывать для приложения `exe` (захват идёт вместе с дочерними процессами).
 ///
 /// Процессов с одним именем бывает много (Chrome, Edge, PowerShell). Берём тот, у которого
-/// есть звуковая сессия (лучше — играющая), и поднимаемся к самому верхнему предку с тем же
-/// именем: так захватятся все вкладки браузера. Сессий нет — берём корневой процесс.
+/// есть звуковая сессия (лучше — играющая), и поднимаемся ровно на один уровень, если родитель
+/// с тем же именем (у Chrome звук играет аудиопроцесс — прямой ребёнок главного). Выше не идём:
+/// Windows захватывает только прямых детей, внуки в захват не попадают (проверено).
+/// Сессий нет — берём корневой процесс.
 pub fn find_root_process(exe: &str) -> Option<u32> {
+    find_capture_target(exe).map(|(pid, _)| pid)
+}
+
+/// То же, что `find_root_process`, плюс играет ли сейчас звук у этого приложения.
+pub fn find_capture_target(exe: &str) -> Option<(u32, bool)> {
     let want = exe.to_lowercase();
     let want = if want.ends_with(".exe") { want } else { format!("{want}.exe") };
     let procs = snapshot();
     let named = |pid: u32| procs.iter().find(|p| p.0 == pid && p.2 == want);
-    let top = |mut pid: u32| {
-        for _ in 0..64 {
-            match named(pid).map(|p| p.1).filter(|&parent| named(parent).is_some()) {
-                Some(parent) => pid = parent,
-                None => break,
-            }
-        }
-        pid
-    };
+    let parent_or_self = |pid: u32| named(pid).map(|p| p.1).filter(|&parent| named(parent).is_some()).unwrap_or(pid);
 
     let mut sessions: Vec<(u32, bool)> = session_pids().into_iter().filter(|(pid, _)| named(*pid).is_some()).collect();
     sessions.sort_by_key(|(_, playing)| !playing);
-    if let Some((pid, _)) = sessions.first() {
-        return Some(top(*pid));
+    if let Some((pid, playing)) = sessions.first() {
+        return Some((parent_or_self(*pid), *playing));
     }
     let mine: Vec<&(u32, u32, String)> = procs.iter().filter(|p| p.2 == want).collect();
-    mine.iter().find(|p| named(p.1).is_none()).or(mine.first()).map(|p| p.0)
+    mine.iter().find(|p| named(p.1).is_none()).or(mine.first()).map(|p| (p.0, false))
 }
 
 fn wide(s: &str) -> Vec<u16> {
