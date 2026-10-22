@@ -17,6 +17,46 @@ struct AppState {
     engine: Engine,
     config: Mutex<Config>,
     tray_mute: Mutex<Option<CheckMenuItem<tauri::Wry>>>,
+    /// Почему горячая клавиша не работает (обычно её уже заняла другая программа).
+    hotkey_error: Mutex<Option<String>>,
+}
+
+/// Старая клавиша по умолчанию: совпадает с «выключить микрофон» в Discord.
+const OLD_DEFAULT_HOTKEY: &str = "Ctrl+Shift+M";
+
+/// Снимает прежнюю горячую клавишу и регистрирует новую.
+fn apply_hotkey(app: &AppHandle, hotkey: &str) -> Result<(), String> {
+    let gs = app.global_shortcut();
+    let _ = gs.unregister_all();
+    gs.register(hotkey).map_err(|e| {
+        if e.to_string().contains("already registered") {
+            format!("{hotkey} уже занята другой программой")
+        } else {
+            format!("{hotkey}: {e}")
+        }
+    })
+}
+
+/// Если MicMix уже запущен — показать его окно и вернуть true.
+/// Два движка писали бы в одну общую память и портили звук в микрофоне.
+fn activate_running_instance() -> bool {
+    use windows::core::w;
+    use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+    use windows::Win32::System::Threading::CreateMutexW;
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW};
+    unsafe {
+        // Мьютекс живёт до конца процесса — специально не закрываем.
+        let _mutex = CreateMutexW(None, false, w!("Local\\MicMix.App"));
+        if GetLastError() != ERROR_ALREADY_EXISTS {
+            return false;
+        }
+        if let Ok(hwnd) = FindWindowW(None, w!("MicMix")) {
+            let _ = ShowWindow(hwnd, SW_SHOW);
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+            let _ = SetForegroundWindow(hwnd);
+        }
+        true
+    }
 }
 
 impl AppState {
@@ -111,12 +151,28 @@ struct MicsInfo {
     mics: Vec<mics::Mic>,
     system: mics::SystemInfo,
     hotkey: String,
+    hotkey_error: Option<String>,
 }
 
 #[tauri::command]
 async fn list_mics(state: State<'_, AppState>) -> Result<MicsInfo, String> {
     let hotkey = state.config.lock().unwrap().mute_hotkey.clone();
-    Ok(MicsInfo { mics: mics::list_mics(), system: mics::system_info(), hotkey })
+    let hotkey_error = state.hotkey_error.lock().unwrap().clone();
+    Ok(MicsInfo { mics: mics::list_mics(), system: mics::system_info(), hotkey, hotkey_error })
+}
+
+/// Сменить горячую клавишу mute. При ошибке остаётся прежняя.
+#[tauri::command]
+async fn set_hotkey(app: AppHandle, state: State<'_, AppState>, hotkey: String) -> Result<(), String> {
+    let old = state.config.lock().unwrap().mute_hotkey.clone();
+    if let Err(e) = apply_hotkey(&app, &hotkey) {
+        let _ = apply_hotkey(&app, &old);
+        return Err(e);
+    }
+    state.config.lock().unwrap().mute_hotkey = hotkey;
+    *state.hotkey_error.lock().unwrap() = None;
+    state.save();
+    Ok(())
 }
 
 /// Путь к install-apo.ps1: в установленном приложении — в ресурсах, при разработке — в корне репозитория.
@@ -189,6 +245,9 @@ fn show_main(app: &AppHandle) {
 }
 
 fn main() {
+    if activate_running_instance() {
+        return;
+    }
     let config = Config::load();
     let hotkey = config.mute_hotkey.clone();
     let engine = Engine::start(&config);
@@ -205,11 +264,26 @@ fn main() {
                 })
                 .build(),
         )
-        .manage(AppState { engine, config: Mutex::new(config), tray_mute: Mutex::new(None) })
+        .manage(AppState {
+            engine,
+            config: Mutex::new(config),
+            tray_mute: Mutex::new(None),
+            hotkey_error: Mutex::new(None),
+        })
         .setup(move |app| {
-            if let Err(e) = app.global_shortcut().register(hotkey.as_str()) {
-                eprintln!("горячая клавиша {hotkey} не зарегистрирована: {e}");
+            let handle = app.handle().clone();
+            let state = app.state::<AppState>();
+            let mut result = apply_hotkey(&handle, &hotkey);
+            // Старая клавиша по умолчанию конфликтует с Discord — переезжаем на новую.
+            if result.is_err() && hotkey == OLD_DEFAULT_HOTKEY {
+                let new = Config::default().mute_hotkey;
+                if apply_hotkey(&handle, &new).is_ok() {
+                    state.config.lock().unwrap().mute_hotkey = new;
+                    state.save();
+                    result = Ok(());
+                }
             }
+            *state.hotkey_error.lock().unwrap() = result.err();
 
             let muted = app.state::<AppState>().engine.status().master_muted;
             let open = MenuItem::with_id(app, "open", "Открыть MicMix", true, None::<&str>)?;
@@ -259,6 +333,7 @@ fn main() {
             set_master_muted,
             set_test_tone,
             list_mics,
+            set_hotkey,
             apo_install
         ])
         .run(tauri::generate_context!())

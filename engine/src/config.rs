@@ -25,7 +25,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Config { sources: Vec::new(), master_gain: 0.7, master_muted: false, mute_hotkey: "Ctrl+Shift+M".into() }
+        Config { sources: Vec::new(), master_gain: 0.7, master_muted: false, mute_hotkey: "Ctrl+Alt+M".into() }
     }
 }
 

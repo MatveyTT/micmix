@@ -3,6 +3,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import AddSourceDialog from "./lib/AddSourceDialog.svelte";
+  import Hotkey from "./lib/Hotkey.svelte";
   import Icon from "./lib/Icon.svelte";
   import Meter from "./lib/Meter.svelte";
   import MicPanel from "./lib/MicPanel.svelte";
@@ -180,9 +181,13 @@
     {/if}
   </main>
 
-  <footer class="flex items-center gap-2 border-t border-line px-6 py-2 text-xs text-muted">
-    <Icon name="keyboard" size={14} />
-    {mics?.hotkey ?? "Ctrl+Shift+M"} — выключить/включить звук в микрофоне. Крестик сворачивает MicMix в трей, звук продолжает идти.
+  <footer class="flex items-center justify-between gap-4 border-t border-line px-6 py-2 text-xs text-muted">
+    {#if mics}
+      <Hotkey hotkey={mics.hotkey} error={mics.hotkey_error} onchanged={() => invoke("list_mics").then((m) => (mics = m))} />
+    {/if}
+    <span class="min-w-0 truncate" title="Крестик сворачивает MicMix в трей — звук продолжает идти.">
+      Крестик сворачивает MicMix в трей — звук продолжает идти.
+    </span>
   </footer>
 </div>
 

@@ -315,8 +315,8 @@ function Install-Apo {
     finally { Start-Audio }
 
     Write-Host "`nГотово." -ForegroundColor Green
-    Write-Host 'Открой «Звукозапись» (или Discord → Проверка микрофона) с этим микрофоном:'
-    Write-Host 'раз в секунду должен быть слышен короткий бип. Проверка: .\install-apo.ps1 -Status'
+    Write-Host 'Звук приложений пойдёт в этот микрофон, пока запущен MicMix.'
+    Write-Host 'Проверка: «Тестовый бип» в MicMix и запись в «Звукозаписи». Состояние: .\install-apo.ps1 -Status'
 }
 
 # --- Удаление ----------------------------------------------------------------
